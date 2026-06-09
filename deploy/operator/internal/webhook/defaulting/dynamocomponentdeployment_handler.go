@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	nvidiacomv1beta1 "github.com/ai-dynamo/dynamo/deploy/operator/api/v1beta1"
+	"github.com/ai-dynamo/dynamo/deploy/operator/internal/runtimeversion"
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -64,6 +65,12 @@ func (d *DCDDefaulter) Default(ctx context.Context, obj runtime.Object) error {
 			"name", dcd.Name,
 			"namespace", dcd.Namespace,
 		)
+	}
+	if runtimeversion.DefaultBetaSharedSpec(&dcd.Spec.DynamoComponentDeploymentSharedSpec) {
+		logger.V(1).Info("defaulted runtimeVersion from main container image tag",
+			"name", dcd.Name,
+			"namespace", dcd.Namespace,
+			"runtimeVersion", dcd.Spec.RuntimeVersion)
 	}
 
 	return nil
