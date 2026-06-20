@@ -63,7 +63,13 @@ use dynamo_runtime::protocols::annotated::{Annotated, AnnotationsProvider};
 
 use crate::protocols::{
     TokenIdType,
-    common::{OutputOptionsProvider, SamplingOptionsProvider, StopConditionsProvider},
+    common::{
+        OutputOptionsProvider, SamplingOptionsProvider, StopConditionsProvider,
+        extensions::{
+            AgentHints, NvExt, NvExtProvider, SessionAction, SessionControl,
+            routing_constraints_to_kv,
+        },
+    },
     openai::{
         DeltaGeneratorExt,
         chat_completions::{
@@ -71,7 +77,6 @@ use crate::protocols::{
         },
         completions::{NvCreateCompletionRequest, NvCreateCompletionResponse},
         embeddings::{NvCreateEmbeddingRequest, NvCreateEmbeddingResponse},
-        nvext::NvExtProvider,
     },
 };
 use crate::tokenizers::traits::Tokenizer;
@@ -84,9 +89,7 @@ pub use crate::protocols::common::preprocessor::PreprocessedEmbeddingRequest;
 
 use crate::protocols::common::llm_backend::EmbeddingsEngineOutput;
 
-fn routing_priorities(
-    hints: Option<&crate::protocols::openai::nvext::AgentHints>,
-) -> (Option<f64>, Option<u32>, Option<i32>) {
+fn routing_priorities(hints: Option<&AgentHints>) -> (Option<f64>, Option<u32>, Option<i32>) {
     let priority_jump = hints.and_then(|h| {
         h.priority
             .map(|priority| priority.max(0) as f64)
@@ -97,16 +100,14 @@ fn routing_priorities(
     (priority_jump, strict_priority, priority)
 }
 
-fn agent_context_session_control(
-    nvext: &crate::protocols::openai::nvext::NvExt,
-) -> Option<crate::protocols::openai::nvext::SessionControl> {
+fn agent_context_session_control(nvext: &NvExt) -> Option<SessionControl> {
     let agent_context = nvext.agent_context.as_ref()?;
-    Some(crate::protocols::openai::nvext::SessionControl {
+    Some(SessionControl {
         session_id: agent_context.trajectory_id.clone(),
         action: agent_context
             .trajectory_final
             .is_some_and(|is_final| is_final)
-            .then_some(crate::protocols::openai::nvext::SessionAction::Close),
+            .then_some(SessionAction::Close),
         timeout: 300,
     })
 }
@@ -866,7 +867,10 @@ impl OpenAIPreprocessor {
                 allowed_worker_ids: None,
                 session_control: agent_context_session_control(nvext)
                     .or_else(|| nvext.session_control.clone()),
-                routing_constraints: nvext.routing_constraints.clone(),
+                routing_constraints: nvext
+                    .routing_constraints
+                    .clone()
+                    .map(routing_constraints_to_kv),
             };
             builder.routing(Some(routing));
         } else if lora_name.is_some() {
@@ -3234,11 +3238,11 @@ mod strip_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::openai::nvext::{NvExt, SessionAction};
+    use crate::protocols::common::extensions::{NvExt, SessionAction};
 
     #[test]
     fn routing_priorities_keep_strict_tier_independent() {
-        let hints = crate::protocols::openai::nvext::AgentHints {
+        let hints = crate::protocols::common::extensions::AgentHints {
             priority: Some(-3),
             strict_priority: Some(7),
             ..Default::default()
