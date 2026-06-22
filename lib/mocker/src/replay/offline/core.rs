@@ -125,3 +125,89 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> ReplayWorkerCore
         self.core.execute_pass(collector, now_ms)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::common::perf_model::{ReplayDecodeInput, ReplayPrefillInput};
+    use crate::common::protocols::{DirectRequest, EngineType};
+    use uuid::Uuid;
+
+    #[derive(Default)]
+    struct CountingPrefillModel(AtomicUsize);
+
+    impl ReplayPrefillLatencyModel for CountingPrefillModel {
+        fn prefill_latency_ms(&self, _input: ReplayPrefillInput<'_>) -> f64 {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            2.0
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingDecodeModel(AtomicUsize);
+
+    impl ReplayDecodeLatencyModel for CountingDecodeModel {
+        fn decode_latency_ms(&self, _input: ReplayDecodeInput<'_>) -> f64 {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            1.0
+        }
+    }
+
+    fn assert_injected_models_used(engine_type: EngineType, capture_kv_events: bool) {
+        let args = MockEngineArgs::builder()
+            .engine_type(engine_type)
+            .block_size(4)
+            .num_gpu_blocks(128)
+            .max_num_batched_tokens(Some(64))
+            .max_num_seqs(Some(4))
+            .enable_prefix_caching(true)
+            .speedup_ratio(0.0)
+            .build()
+            .unwrap();
+        let prefill_model = Arc::new(CountingPrefillModel::default());
+        let decode_model = Arc::new(CountingDecodeModel::default());
+        let mut worker = if capture_kv_events {
+            ReplayWorkerCore::new_with_kv_capture_and_latency_models(
+                args,
+                7,
+                Arc::clone(&prefill_model),
+                Arc::clone(&decode_model),
+            )
+        } else {
+            ReplayWorkerCore::new_with_latency_models(
+                args,
+                Arc::clone(&prefill_model),
+                Arc::clone(&decode_model),
+            )
+        };
+        worker.receive(DirectRequest {
+            tokens: vec![1; 8],
+            max_output_tokens: 2,
+            uuid: Some(Uuid::from_u128(1)),
+            ..Default::default()
+        });
+
+        let mut collector = TraceCollector::default();
+        let mut now_ms = 0.0;
+        for _ in 0..8 {
+            if worker.is_empty() {
+                break;
+            }
+            now_ms = worker.execute_pass(&mut collector, now_ms).end_ms;
+        }
+
+        assert!(worker.is_empty());
+        assert!(prefill_model.0.load(Ordering::Relaxed) > 0);
+        assert!(decode_model.0.load(Ordering::Relaxed) > 0);
+    }
+
+    #[test]
+    fn constructors_preserve_injected_models_for_every_engine_and_capture_mode() {
+        for engine_type in [EngineType::Vllm, EngineType::Sglang] {
+            assert_injected_models_used(engine_type, false);
+            assert_injected_models_used(engine_type, true);
+        }
+    }
+}

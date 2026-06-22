@@ -52,20 +52,24 @@ pub struct Replay<M: ReplayLatencyModel> {
 }
 
 impl<M: ReplayLatencyModel> Replay<M> {
+    /// Create an aggregated replay runner that owns its latency model.
     pub fn new(latency_model: M) -> Self {
         Self {
             latency_model: Arc::new(latency_model),
         }
     }
 
+    /// Create an aggregated replay runner from a shared latency model.
     pub fn from_arc(latency_model: Arc<M>) -> Self {
         Self { latency_model }
     }
 
+    /// Return the configured aggregated latency model.
     pub fn latency_model(&self) -> &M {
         self.latency_model.as_ref()
     }
 
+    /// Simulate timestamped requests with this runner.
     #[allow(clippy::too_many_arguments)]
     pub fn simulate_trace_requests(
         &self,
@@ -89,6 +93,7 @@ impl<M: ReplayLatencyModel> Replay<M> {
         )
     }
 
+    /// Simulate requests under a fixed global concurrency cap.
     #[allow(clippy::too_many_arguments)]
     pub fn simulate_concurrency_requests(
         &self,
@@ -121,6 +126,7 @@ pub struct DisaggregatedReplay<P: ReplayPrefillLatencyModel, D: ReplayDecodeLate
 }
 
 impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> DisaggregatedReplay<P, D> {
+    /// Create a disaggregated runner with independently owned stage models.
     pub fn new(prefill_latency_model: P, decode_latency_model: D) -> Self {
         Self::from_arcs(
             Arc::new(prefill_latency_model),
@@ -128,6 +134,7 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> DisaggregatedRep
         )
     }
 
+    /// Create a disaggregated runner from shared stage models.
     pub fn from_arcs(prefill_latency_model: Arc<P>, decode_latency_model: Arc<D>) -> Self {
         Self {
             prefill_latency_model,
@@ -135,14 +142,17 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> DisaggregatedRep
         }
     }
 
+    /// Return the configured prefill latency model.
     pub fn prefill_latency_model(&self) -> &P {
         self.prefill_latency_model.as_ref()
     }
 
+    /// Return the configured decode latency model.
     pub fn decode_latency_model(&self) -> &D {
         self.decode_latency_model.as_ref()
     }
 
+    /// Simulate timestamped requests with independent stage models.
     #[allow(clippy::too_many_arguments)]
     pub fn simulate_trace_requests(
         &self,
@@ -165,6 +175,7 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> DisaggregatedRep
         )
     }
 
+    /// Simulate requests under a fixed cap with independent stage models.
     #[allow(clippy::too_many_arguments)]
     pub fn simulate_concurrency_requests(
         &self,
@@ -189,6 +200,7 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> DisaggregatedRep
 }
 
 impl<M: ReplayLatencyModel> DisaggregatedReplay<M, M> {
+    /// Use one combined model instance for both disaggregated stages.
     pub fn shared(latency_model: M) -> Self {
         let latency_model = Arc::new(latency_model);
         Self::from_arcs(Arc::clone(&latency_model), latency_model)
@@ -225,7 +237,9 @@ pub use entrypoints::{
     simulate_concurrency_live_file_with_router_mode_and_format, simulate_concurrency_live_requests,
     simulate_concurrency_live_requests_with_router_mode, simulate_concurrency_live_workload,
     simulate_concurrency_live_workload_with_router_mode, simulate_concurrency_requests,
+    simulate_concurrency_requests_disagg_with_latency_models,
     simulate_concurrency_requests_disagg_with_router_mode,
+    simulate_concurrency_requests_with_latency_model,
     simulate_concurrency_requests_with_router_mode, simulate_concurrency_workload,
     simulate_concurrency_workload_disagg_with_router_mode,
     simulate_concurrency_workload_with_router_mode, simulate_trace_file,
@@ -236,9 +250,10 @@ pub use entrypoints::{
     simulate_trace_live_file_with_router_mode_and_format, simulate_trace_live_requests,
     simulate_trace_live_requests_with_router_mode, simulate_trace_live_workload,
     simulate_trace_live_workload_with_router_mode, simulate_trace_requests,
-    simulate_trace_requests_disagg_with_router_mode, simulate_trace_requests_with_router_mode,
-    simulate_trace_workload, simulate_trace_workload_disagg_with_router_mode,
-    simulate_trace_workload_with_router_mode,
+    simulate_trace_requests_disagg_with_latency_models,
+    simulate_trace_requests_disagg_with_router_mode, simulate_trace_requests_with_latency_model,
+    simulate_trace_requests_with_router_mode, simulate_trace_workload,
+    simulate_trace_workload_disagg_with_router_mode, simulate_trace_workload_with_router_mode,
 };
 pub use planner_handle::{PlannerReplayHandle, PlannerTickData};
 pub use validate::validate_replay_args_mode;

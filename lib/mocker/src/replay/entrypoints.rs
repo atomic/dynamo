@@ -481,6 +481,7 @@ pub fn simulate_trace_requests_with_router_mode(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Simulate timestamped requests using a caller-supplied aggregated latency model.
 pub fn simulate_trace_requests_with_latency_model<M: ReplayLatencyModel>(
     latency_model: Arc<M>,
     args: MockEngineArgs,
@@ -534,6 +535,7 @@ pub fn simulate_trace_requests_disagg_with_router_mode(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Simulate timestamped disaggregated requests with independent stage models.
 pub fn simulate_trace_requests_disagg_with_latency_models<
     P: ReplayPrefillLatencyModel,
     D: ReplayDecodeLatencyModel,
@@ -949,6 +951,7 @@ pub fn simulate_concurrency_requests_with_router_mode(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Simulate fixed-concurrency requests using a caller-supplied aggregated model.
 pub fn simulate_concurrency_requests_with_latency_model<M: ReplayLatencyModel>(
     latency_model: Arc<M>,
     args: MockEngineArgs,
@@ -1002,6 +1005,7 @@ pub fn simulate_concurrency_requests_disagg_with_router_mode(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Simulate fixed-concurrency disaggregated requests with independent stage models.
 pub fn simulate_concurrency_requests_disagg_with_latency_models<
     P: ReplayPrefillLatencyModel,
     D: ReplayDecodeLatencyModel,

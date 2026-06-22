@@ -18,11 +18,14 @@ use std::sync::Arc;
 /// Inputs for one replay prefill latency prediction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReplayPrefillInput<'a> {
+    /// Per-request sequence lengths in forward-pass order.
     pub sequence_lengths: &'a [usize],
+    /// Per-request cached-prefix lengths in the same order.
     pub prefix_lengths: &'a [usize],
 }
 
 impl<'a> ReplayPrefillInput<'a> {
+    /// Validate and construct an exact prefill batch description.
     pub fn new(sequence_lengths: &'a [usize], prefix_lengths: &'a [usize]) -> Result<Self> {
         if sequence_lengths.is_empty() {
             anyhow::bail!("replay prefill input requires at least one request");
@@ -50,18 +53,22 @@ impl<'a> ReplayPrefillInput<'a> {
         })
     }
 
+    /// Number of requests in the forward pass.
     pub fn batch_size(&self) -> usize {
         self.sequence_lengths.len()
     }
 
+    /// Integer average of the exact sequence lengths.
     pub fn avg_sequence_length(&self) -> usize {
         average_length(self.sequence_lengths)
     }
 
+    /// Integer average of the exact cached-prefix lengths.
     pub fn avg_prefix_length(&self) -> usize {
         average_length(self.prefix_lengths)
     }
 
+    /// AIC-compatible average sequence length minus average prefix length.
     pub fn avg_effective_input_length(&self) -> usize {
         self.avg_sequence_length()
             .saturating_sub(self.avg_prefix_length())
@@ -71,18 +78,23 @@ impl<'a> ReplayPrefillInput<'a> {
 /// Inputs for one replay decode latency prediction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReplayDecodeInput<'a> {
+    /// Per-request context lengths in forward-pass order.
     pub sequence_lengths: &'a [usize],
+    /// KV tokens active for this forward pass.
     pub active_kv_tokens: usize,
+    /// Total KV-token capacity of the worker.
     pub total_kv_tokens: usize,
     /// Maximum number of output tokens evaluated per request in this forward pass.
     pub output_length: usize,
 }
 
 impl ReplayDecodeInput<'_> {
+    /// Number of requests in the forward pass.
     pub fn batch_size(&self) -> usize {
         self.sequence_lengths.len()
     }
 
+    /// Integer average of the exact context lengths.
     pub fn avg_context_length(&self) -> usize {
         average_length(self.sequence_lengths)
     }
@@ -97,11 +109,13 @@ fn average_length(lengths: &[usize]) -> usize {
 
 /// Prefill latency model used by replay schedulers.
 pub trait ReplayPrefillLatencyModel: Send + Sync {
+    /// Predict prefill latency in milliseconds for one exact forward pass.
     fn prefill_latency_ms(&self, input: ReplayPrefillInput<'_>) -> f64;
 }
 
 /// Decode latency model used by replay schedulers.
 pub trait ReplayDecodeLatencyModel: Send + Sync {
+    /// Predict decode latency in milliseconds for one exact forward pass.
     fn decode_latency_ms(&self, input: ReplayDecodeInput<'_>) -> f64;
 }
 
@@ -429,7 +443,7 @@ impl ReplayDecodeLatencyModel for PerfModel {
             input.active_kv_tokens,
             input.avg_context_length(),
             input.total_kv_tokens,
-            2,
+            input.output_length,
         )
     }
 }
@@ -460,6 +474,21 @@ mod tests {
                 .unwrap()
                 .push((batch_size, isl, osl));
             1.0
+        }
+    }
+
+    #[test]
+    fn normalize_replay_latency_ms_enforces_contract() {
+        for (latency_ms, minimum_ms, expected_ms) in [
+            (f64::NAN, 1.0, 1.0),
+            (-1.0, 1.0, 1.0),
+            (0.5, 1.0, 1.0),
+            (2.0, 1.0, 2.0),
+        ] {
+            assert_eq!(
+                normalize_replay_latency_ms(latency_ms, minimum_ms, "test"),
+                expected_ms
+            );
         }
     }
 
@@ -503,6 +532,6 @@ mod tests {
         });
 
         assert_eq!(*callback.prefill_calls.lock().unwrap(), vec![(2, 6, 4)]);
-        assert_eq!(*callback.decode_calls.lock().unwrap(), vec![(2, 11, 2)]);
+        assert_eq!(*callback.decode_calls.lock().unwrap(), vec![(2, 11, 3)]);
     }
 }

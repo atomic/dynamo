@@ -149,7 +149,7 @@ fn check_decode_mem_for_burst(
 }
 
 #[cfg(test)]
-pub(super) fn simulate_decode_step(
+pub(super) fn simulate_decode_step_with_default_model(
     running: &mut Vec<SglangRequest>,
     kv_manager: &mut SglangKvManager,
     config: &SglangConfig,

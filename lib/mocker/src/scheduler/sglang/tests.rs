@@ -13,7 +13,7 @@ use uuid::Uuid;
 use super::config::{SchedulePolicy, SglangConfig, ceil_to_block};
 use super::core::SglangCore;
 use super::decode;
-use super::decode::simulate_decode_step;
+use super::decode::simulate_decode_step_with_default_model;
 use super::live::SglangScheduler;
 use super::policy::apply_schedule_policy;
 use super::prefill::get_new_batch_prefill;
@@ -79,7 +79,8 @@ fn make_decoded_request(
         cached_tokens: 0,
         allocated_tokens: ceil_to_block(prompt_len, config.block_size),
     }];
-    let result = simulate_decode_step(&mut running, kv_manager, config, 0.0, false);
+    let result =
+        simulate_decode_step_with_default_model(&mut running, kv_manager, config, 0.0, false);
     assert_eq!(result.output_signals.len(), 1);
     running.pop().unwrap()
 }
@@ -346,15 +347,21 @@ mod core_behavior {
             allocated_tokens: 8,
         }];
 
-        let first = simulate_decode_step(&mut running, &mut kv_manager, &config, 0.0, false);
+        let first = simulate_decode_step_with_default_model(
+            &mut running,
+            &mut kv_manager,
+            &config,
+            0.0,
+            false,
+        );
         assert_eq!(running[0].allocated_tokens, 8);
         assert_eq!(running[0].output_len(), 1);
         assert_eq!(first.output_signals.len(), 1);
 
-        simulate_decode_step(&mut running, &mut kv_manager, &config, 0.0, false);
+        simulate_decode_step_with_default_model(&mut running, &mut kv_manager, &config, 0.0, false);
         assert_eq!(running[0].allocated_tokens, 8);
 
-        simulate_decode_step(&mut running, &mut kv_manager, &config, 0.0, false);
+        simulate_decode_step_with_default_model(&mut running, &mut kv_manager, &config, 0.0, false);
         assert_eq!(running[0].allocated_tokens, 12);
     }
 
@@ -405,14 +412,14 @@ mod core_behavior {
             allocated_tokens: 4,
         }];
 
-        let base = simulate_decode_step(
+        let base = simulate_decode_step_with_default_model(
             &mut base_running,
             &mut base_kv_manager,
             &base_config,
             0.0,
             true,
         );
-        let fast = simulate_decode_step(
+        let fast = simulate_decode_step_with_default_model(
             &mut fast_running,
             &mut fast_kv_manager,
             &fast_config,
@@ -498,7 +505,7 @@ mod core_behavior {
             allocated_tokens: 4,
         }];
 
-        simulate_decode_step(&mut running, &mut kv_manager, &config, 0.0, false);
+        simulate_decode_step_with_default_model(&mut running, &mut kv_manager, &config, 0.0, false);
         let prefix = running[0].sequence_prefix(4);
         assert_eq!(kv_manager.cache().prefix_match_len(&prefix), 4);
     }
@@ -912,7 +919,13 @@ mod router_events {
             .into_iter()
             .map(|scheduled| scheduled.request)
             .collect();
-        let decode1 = simulate_decode_step(&mut running, &mut kv_manager, &config, 0.0, false);
+        let decode1 = simulate_decode_step_with_default_model(
+            &mut running,
+            &mut kv_manager,
+            &config,
+            0.0,
+            false,
+        );
         assert_eq!(decode1.output_signals.len(), 1);
         harness.apply_events(buffer.drain()).await;
         let req1 = running.pop().unwrap();
@@ -955,8 +968,13 @@ mod router_events {
                 continue;
             }
 
-            let decode =
-                simulate_decode_step(&mut running, &mut kv_manager, &config, now_ms, false);
+            let decode = simulate_decode_step_with_default_model(
+                &mut running,
+                &mut kv_manager,
+                &config,
+                now_ms,
+                false,
+            );
             now_ms = decode.end_ms;
             for req in decode.requests.into_iter().rev() {
                 waiting.push_front(req);
