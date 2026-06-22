@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::common::perf_model::{
     PerfModel, ReplayDecodeLatencyModel, ReplayPrefillInput, ReplayPrefillLatencyModel,
-    normalize_replay_latency_ms,
+    replay_latency_duration, scale_replay_duration,
 };
 use crate::common::protocols::{DirectRequest, KvEventPublishers, MockEngineArgs, WorkerType};
 use crate::common::speculative::{SpeculativeDecodeSampler, normalize_conditional_accept_rates};
@@ -401,7 +401,7 @@ fn simulate_prefill_duration<M: ReplayPrefillLatencyModel>(
         return Duration::ZERO;
     }
 
-    let prefill_time = normalize_replay_latency_ms(
+    let total_time = replay_latency_duration(
         latency_model.prefill_latency_ms(
             ReplayPrefillInput::new(sequence_lengths, prefix_lengths)
                 .expect("SGLang prefill batch must contain valid request shapes"),
@@ -409,13 +409,11 @@ fn simulate_prefill_duration<M: ReplayPrefillLatencyModel>(
         0.0,
         "prefill",
     );
-    let total_time = Duration::from_secs_f64(prefill_time / 1000.0);
-
-    if !apply_speedup || config.speedup_ratio <= 0.0 || total_time <= Duration::ZERO {
+    if !apply_speedup {
         return total_time;
     }
 
-    Duration::from_secs_f64(total_time.as_secs_f64() / config.speedup_ratio)
+    scale_replay_duration(total_time, config.speedup_ratio, "prefill")
 }
 
 fn debug_assert_sglang_scheduler_state(

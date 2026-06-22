@@ -6,7 +6,7 @@ use std::time::Duration;
 #[cfg(test)]
 use crate::common::perf_model::PerfModel;
 use crate::common::perf_model::{
-    ReplayDecodeInput, ReplayDecodeLatencyModel, normalize_replay_latency_ms,
+    ReplayDecodeInput, ReplayDecodeLatencyModel, replay_latency_duration, scale_replay_duration,
 };
 use crate::common::protocols::OutputSignal;
 use crate::common::speculative::SpeculativeDecodeSampler;
@@ -204,14 +204,14 @@ pub(super) fn simulate_decode_step_with_sampler<M: ReplayDecodeLatencyModel>(
         .iter()
         .map(SglangRequest::current_sequence_len)
         .collect::<Vec<_>>();
-    let decode_time = if config.worker_type == crate::common::protocols::WorkerType::Prefill {
-        0.0
+    let unscaled_time = if config.worker_type == crate::common::protocols::WorkerType::Prefill {
+        Duration::ZERO
     } else {
         let active_kv_tokens = sequence_lengths
             .iter()
             .sum::<usize>()
             .min(config.total_kv_tokens);
-        normalize_replay_latency_ms(
+        replay_latency_duration(
             latency_model.decode_latency_ms(ReplayDecodeInput {
                 sequence_lengths: &sequence_lengths,
                 active_kv_tokens,
@@ -222,10 +222,9 @@ pub(super) fn simulate_decode_step_with_sampler<M: ReplayDecodeLatencyModel>(
             "decode",
         )
     };
-    let unscaled_time = Duration::from_secs_f64(decode_time / 1000.0);
     let effective_ratio = config.speedup_ratio * config.decode_speedup_ratio;
-    let total_time = if apply_speedup && effective_ratio > 0.0 && unscaled_time > Duration::ZERO {
-        Duration::from_secs_f64(unscaled_time.as_secs_f64() / effective_ratio)
+    let total_time = if apply_speedup {
+        scale_replay_duration(unscaled_time, effective_ratio, "decode")
     } else {
         unscaled_time
     };

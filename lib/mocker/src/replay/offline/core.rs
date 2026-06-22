@@ -40,26 +40,13 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> ReplayWorkerCore
         prefill_latency_model: Arc<P>,
         decode_latency_model: Arc<D>,
     ) -> Self {
-        let core = match args.engine_type {
-            crate::common::protocols::EngineType::Vllm
-            | crate::common::protocols::EngineType::Trtllm => {
-                let mut core = VllmCore::new_with_latency_models(
-                    args,
-                    prefill_latency_model,
-                    decode_latency_model,
-                );
-                Self::init_offload_vllm(&mut core);
-                EngineCore::Vllm(core)
-            }
-            crate::common::protocols::EngineType::Sglang => {
-                EngineCore::Sglang(SglangCore::new_with_latency_models(
-                    args,
-                    prefill_latency_model,
-                    decode_latency_model,
-                ))
-            }
-        };
-        Self { core }
+        Self::new_with_worker_id_and_latency_models(
+            args,
+            WorkerId::default(),
+            false,
+            prefill_latency_model,
+            decode_latency_model,
+        )
     }
 
     pub(crate) fn new_with_kv_capture_and_latency_models(
@@ -68,25 +55,60 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> ReplayWorkerCore
         prefill_latency_model: Arc<P>,
         decode_latency_model: Arc<D>,
     ) -> Self {
+        Self::new_with_worker_id_and_latency_models(
+            args,
+            worker_id,
+            true,
+            prefill_latency_model,
+            decode_latency_model,
+        )
+    }
+
+    pub(crate) fn new_with_worker_id_and_latency_models(
+        args: MockEngineArgs,
+        worker_id: WorkerId,
+        capture_kv_events: bool,
+        prefill_latency_model: Arc<P>,
+        decode_latency_model: Arc<D>,
+    ) -> Self {
         let core = match args.engine_type {
             crate::common::protocols::EngineType::Vllm
             | crate::common::protocols::EngineType::Trtllm => {
-                let mut core = VllmCore::new_with_kv_capture_and_latency_models(
-                    args,
-                    worker_id,
-                    prefill_latency_model,
-                    decode_latency_model,
-                );
+                let mut core = if capture_kv_events {
+                    VllmCore::new_with_kv_capture_and_latency_models(
+                        args,
+                        worker_id,
+                        prefill_latency_model,
+                        decode_latency_model,
+                    )
+                } else {
+                    VllmCore::new_with_worker_id_and_latency_models(
+                        args,
+                        worker_id,
+                        prefill_latency_model,
+                        decode_latency_model,
+                    )
+                };
                 Self::init_offload_vllm(&mut core);
                 EngineCore::Vllm(core)
             }
             crate::common::protocols::EngineType::Sglang => {
-                EngineCore::Sglang(SglangCore::new_with_kv_capture_and_latency_models(
-                    args,
-                    worker_id,
-                    prefill_latency_model,
-                    decode_latency_model,
-                ))
+                let core = if capture_kv_events {
+                    SglangCore::new_with_kv_capture_and_latency_models(
+                        args,
+                        worker_id,
+                        prefill_latency_model,
+                        decode_latency_model,
+                    )
+                } else {
+                    SglangCore::new_with_worker_id_and_latency_models(
+                        args,
+                        worker_id,
+                        prefill_latency_model,
+                        decode_latency_model,
+                    )
+                };
+                EngineCore::Sglang(core)
             }
         };
         Self { core }
@@ -123,6 +145,23 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> ReplayWorkerCore
         now_ms: f64,
     ) -> EnginePassResult {
         self.core.execute_pass(collector, now_ms)
+    }
+
+    pub(crate) fn execute_hidden_pass(&mut self, now_ms: f64) -> EnginePassResult {
+        self.core.execute_hidden_pass(now_ms)
+    }
+
+    #[cfg(feature = "kvbm-offload")]
+    pub(crate) fn tick_offload_only(
+        &mut self,
+        now_ms: f64,
+    ) -> Vec<dynamo_kv_router::protocols::RouterEvent> {
+        self.core.tick_offload_only(now_ms)
+    }
+
+    #[cfg(feature = "kvbm-offload")]
+    pub(crate) fn earliest_offload_deadline(&self) -> Option<f64> {
+        self.core.earliest_offload_deadline()
     }
 }
 

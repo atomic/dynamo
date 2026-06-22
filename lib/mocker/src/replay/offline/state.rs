@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
+use super::core::ReplayWorkerCore;
 use crate::common::perf_model::{PerfModel, ReplayDecodeLatencyModel, ReplayPrefillLatencyModel};
 use crate::common::protocols::DirectRequest;
 use crate::common::protocols::MockEngineArgs;
 use crate::replay::TraceCollector;
-use crate::scheduler::{EngineCore, EnginePassResult};
+use crate::scheduler::EnginePassResult;
 #[cfg(feature = "kvbm-offload")]
 use dynamo_kv_router::protocols::RouterEvent;
 use uuid::Uuid;
@@ -151,7 +152,7 @@ pub(crate) struct OfflineWorkerState<
     P: ReplayPrefillLatencyModel = PerfModel,
     D: ReplayDecodeLatencyModel = PerfModel,
 > {
-    core: EngineCore<P, D>,
+    core: ReplayWorkerCore<P, D>,
     busy: bool,
     in_flight: usize,
 }
@@ -173,55 +174,13 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> OfflineWorkerSta
         prefill_latency_model: Arc<P>,
         decode_latency_model: Arc<D>,
     ) -> Self {
-        let core = match args.engine_type {
-            crate::common::protocols::EngineType::Vllm
-            | crate::common::protocols::EngineType::Trtllm => {
-                #[cfg_attr(not(feature = "kvbm-offload"), allow(unused_mut))]
-                let mut core = if capture_kv_events {
-                    crate::scheduler::VllmCore::new_with_kv_capture_and_latency_models(
-                        args,
-                        worker_idx as u64,
-                        prefill_latency_model,
-                        decode_latency_model,
-                    )
-                } else {
-                    crate::scheduler::VllmCore::new_with_worker_id_and_latency_models(
-                        args,
-                        worker_idx as u64,
-                        prefill_latency_model,
-                        decode_latency_model,
-                    )
-                };
-                #[cfg(feature = "kvbm-offload")]
-                if let Err(e) = core.init_offload_offline() {
-                    tracing::error!(
-                        "kvbm-offload offline init failed for worker {worker_idx}: {e}"
-                    );
-                }
-                EngineCore::Vllm(core)
-            }
-            crate::common::protocols::EngineType::Sglang => {
-                if capture_kv_events {
-                    EngineCore::Sglang(
-                        crate::scheduler::SglangCore::new_with_kv_capture_and_latency_models(
-                            args,
-                            worker_idx as u64,
-                            prefill_latency_model,
-                            decode_latency_model,
-                        ),
-                    )
-                } else {
-                    EngineCore::Sglang(
-                        crate::scheduler::SglangCore::new_with_worker_id_and_latency_models(
-                            args,
-                            worker_idx as u64,
-                            prefill_latency_model,
-                            decode_latency_model,
-                        ),
-                    )
-                }
-            }
-        };
+        let core = ReplayWorkerCore::new_with_worker_id_and_latency_models(
+            args,
+            worker_idx as u64,
+            capture_kv_events,
+            prefill_latency_model,
+            decode_latency_model,
+        );
 
         Self {
             core,

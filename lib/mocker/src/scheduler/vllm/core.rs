@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::common::perf_model::{
     PerfModel, ReplayDecodeInput, ReplayDecodeLatencyModel, ReplayPrefillInput,
-    ReplayPrefillLatencyModel, normalize_replay_latency_ms,
+    ReplayPrefillLatencyModel, replay_latency_duration, scale_replay_duration,
 };
 #[cfg(feature = "kvbm-offload")]
 use crate::common::protocols::G1;
@@ -1326,17 +1326,14 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> VllmCore<P, D> {
         } else {
             let active_kv_tokens = self.kv_manager.num_active_blocks() * self.args.block_size;
             let total_kv_tokens = self.args.num_gpu_blocks * self.args.block_size;
-            let decode_ms = normalize_replay_latency_ms(
-                self.decode_latency_model
-                    .decode_latency_ms(ReplayDecodeInput {
-                        sequence_lengths: &sequence_lengths,
-                        active_kv_tokens,
-                        total_kv_tokens,
-                        output_length: 1,
-                    }),
-                1.0,
-                "decode",
-            );
+            let decode_ms = self
+                .decode_latency_model
+                .decode_latency_ms(ReplayDecodeInput {
+                    sequence_lengths: &sequence_lengths,
+                    active_kv_tokens,
+                    total_kv_tokens,
+                    output_length: 1,
+                });
             let dt = scale_decode_time(decode_ms, &self.args);
             (dt, decode_start_ms + dt.as_secs_f64() * 1000.0)
         };
@@ -1495,17 +1492,14 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> VllmCore<P, D> {
                 .saturating_sub(reservation.len())
                 * self.args.block_size;
             let total_kv_tokens = self.args.num_gpu_blocks * self.args.block_size;
-            let decode_ms = normalize_replay_latency_ms(
-                self.decode_latency_model
-                    .decode_latency_ms(ReplayDecodeInput {
-                        sequence_lengths: &sequence_lengths,
-                        active_kv_tokens,
-                        total_kv_tokens,
-                        output_length: max_burst,
-                    }),
-                1.0,
-                "decode",
-            );
+            let decode_ms = self
+                .decode_latency_model
+                .decode_latency_ms(ReplayDecodeInput {
+                    sequence_lengths: &sequence_lengths,
+                    active_kv_tokens,
+                    total_kv_tokens,
+                    output_length: max_burst,
+                });
             let duration = scale_decode_time(decode_ms, &self.args);
             (duration, decode_start_ms + duration.as_secs_f64() * 1000.0)
         };
@@ -1629,7 +1623,7 @@ fn predict_prefill_duration<M: ReplayPrefillLatencyModel>(
         return Duration::ZERO;
     }
 
-    let prefill_ms = normalize_replay_latency_ms(
+    let total_time = replay_latency_duration(
         latency_model.prefill_latency_ms(
             ReplayPrefillInput::new(sequence_lengths, prefix_lengths)
                 .expect("vLLM prefill batch must contain valid request shapes"),
@@ -1637,20 +1631,13 @@ fn predict_prefill_duration<M: ReplayPrefillLatencyModel>(
         0.0,
         "prefill",
     );
-    let total_time = Duration::from_secs_f64(prefill_ms / 1000.0);
-    if args.speedup_ratio <= 0.0 || total_time <= Duration::ZERO {
-        return total_time;
-    }
-    Duration::from_secs_f64(total_time.as_secs_f64() / args.speedup_ratio)
+    scale_replay_duration(total_time, args.speedup_ratio, "prefill")
 }
 
 fn scale_decode_time(decode_ms: f64, args: &MockEngineArgs) -> Duration {
-    let unscaled = Duration::from_secs_f64(decode_ms / 1000.0);
+    let unscaled = replay_latency_duration(decode_ms, 1.0, "decode");
     let effective_ratio = args.speedup_ratio * args.decode_speedup_ratio;
-    if effective_ratio <= 0.0 || unscaled <= Duration::ZERO {
-        return unscaled;
-    }
-    Duration::from_secs_f64(unscaled.as_secs_f64() / effective_ratio)
+    scale_replay_duration(unscaled, effective_ratio, "decode")
 }
 
 fn process_signals(kv_manager: &mut KvManager, signals: &[MoveBlock]) -> bool {

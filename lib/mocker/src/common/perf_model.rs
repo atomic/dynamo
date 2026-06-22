@@ -14,6 +14,7 @@ use ndarray_interp::interp1d::{Interp1DBuilder, Linear};
 use ndarray_interp::interp2d::{Bilinear, Interp2DBuilder};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Inputs for one replay prefill latency prediction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +144,46 @@ pub(crate) fn normalize_replay_latency_ms(
         "Replay latency model returned an invalid latency; using the minimum"
     );
     minimum_ms
+}
+
+/// Convert a replay model response into a representable duration.
+///
+/// Model implementations may be external to Dynamo, so a finite latency is
+/// not sufficient: it must also fit in [`Duration`]. Out-of-range values are
+/// clamped instead of allowing `Duration::from_secs_f64` to panic.
+pub(crate) fn replay_latency_duration(
+    latency_ms: f64,
+    minimum_ms: f64,
+    phase: &'static str,
+) -> Duration {
+    let seconds = normalize_replay_latency_ms(latency_ms, minimum_ms, phase) / 1000.0;
+    duration_from_seconds(seconds, phase)
+}
+
+/// Apply an optional replay speedup without overflowing [`Duration`].
+pub(crate) fn scale_replay_duration(
+    duration: Duration,
+    speedup_ratio: f64,
+    phase: &'static str,
+) -> Duration {
+    if duration.is_zero() || !speedup_ratio.is_finite() || speedup_ratio <= 0.0 {
+        return duration;
+    }
+
+    duration_from_seconds(duration.as_secs_f64() / speedup_ratio, phase)
+}
+
+fn duration_from_seconds(seconds: f64, phase: &'static str) -> Duration {
+    if seconds.is_finite() && seconds >= 0.0 && seconds < Duration::MAX.as_secs_f64() {
+        return Duration::from_secs_f64(seconds);
+    }
+
+    tracing::warn!(
+        phase,
+        seconds,
+        "Replay latency exceeds the representable duration; clamping to Duration::MAX"
+    );
+    Duration::MAX
 }
 
 /// Trait to abstract over 1D interpolation for prefill timing
@@ -477,6 +518,30 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingPrefillInterpolator {
+        calls: Mutex<Vec<f64>>,
+    }
+
+    impl PrefillInterpolator for RecordingPrefillInterpolator {
+        fn interp(&self, x: f64) -> Result<f64, InterpolateError> {
+            self.calls.lock().unwrap().push(x);
+            Ok(7.0)
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDecodeInterpolator {
+        calls: Mutex<Vec<(f64, f64)>>,
+    }
+
+    impl DecodeInterpolator for RecordingDecodeInterpolator {
+        fn interp(&self, x: f64, y: f64) -> Result<f64, InterpolateError> {
+            self.calls.lock().unwrap().push((x, y));
+            Ok(11.0)
+        }
+    }
+
     #[test]
     fn normalize_replay_latency_ms_enforces_contract() {
         for (latency_ms, minimum_ms, expected_ms) in [
@@ -490,6 +555,18 @@ mod tests {
                 expected_ms
             );
         }
+    }
+
+    #[test]
+    fn replay_latency_duration_clamps_unrepresentable_values() {
+        assert_eq!(
+            replay_latency_duration(f64::MAX, 0.0, "test"),
+            Duration::MAX
+        );
+        assert_eq!(
+            scale_replay_duration(Duration::from_secs(1), f64::MIN_POSITIVE, "test"),
+            Duration::MAX
+        );
     }
 
     #[test]
@@ -516,6 +593,53 @@ mod tests {
         assert_eq!(decode.batch_size(), 2);
         assert_eq!(decode.avg_context_length(), 11);
         assert_eq!(decode.output_length, 3);
+    }
+
+    #[test]
+    fn polynomial_model_uses_legacy_aggregates_from_exact_lengths() {
+        let model = PerfModel::Polynomial;
+        let prefill = ReplayPrefillInput::new(&[8, 13], &[4, 5]).unwrap();
+        let decode = ReplayDecodeInput {
+            sequence_lengths: &[9, 14],
+            active_kv_tokens: 23,
+            total_kv_tokens: 128,
+            output_length: 3,
+        };
+
+        assert_eq!(
+            model.prefill_latency_ms(prefill),
+            model.predict_prefill_time(2, 10, 4)
+        );
+        assert_eq!(
+            model.decode_latency_ms(decode),
+            model.predict_decode_time(2, 23, 11, 128)
+        );
+    }
+
+    #[test]
+    fn interpolated_model_uses_legacy_aggregates_from_exact_lengths() {
+        let prefill_interp = Arc::new(RecordingPrefillInterpolator::default());
+        let decode_interp = Arc::new(RecordingDecodeInterpolator::default());
+        let model = PerfModel::Interpolated {
+            prefill_interp: prefill_interp.clone(),
+            decode_interp: decode_interp.clone(),
+        };
+
+        assert_eq!(
+            model.prefill_latency_ms(ReplayPrefillInput::new(&[8, 13], &[4, 5]).unwrap()),
+            7.0
+        );
+        assert_eq!(
+            model.decode_latency_ms(ReplayDecodeInput {
+                sequence_lengths: &[9, 14],
+                active_kv_tokens: 23,
+                total_kv_tokens: 128,
+                output_length: 3,
+            }),
+            11.0
+        );
+        assert_eq!(*prefill_interp.calls.lock().unwrap(), vec![12.0]);
+        assert_eq!(*decode_interp.calls.lock().unwrap(), vec![(23.0, 11.0)]);
     }
 
     #[test]

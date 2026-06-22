@@ -9,6 +9,7 @@ mod online;
 mod planner_handle;
 mod router_shared;
 mod validate;
+mod workload;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub use crate::common::perf_model::{
     ReplayPrefillLatencyModel,
 };
 use crate::common::protocols::{DirectRequest, MockEngineArgs};
+use crate::loadgen::Trace;
 use dynamo_kv_router::PrefillLoadEstimator;
 
 pub use artifacts::{
@@ -116,6 +118,52 @@ impl<M: ReplayLatencyModel> Replay<M> {
             router_mode,
         )
     }
+
+    /// Simulate a timestamped multi-turn workload with this runner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_trace_workload(
+        &self,
+        args: MockEngineArgs,
+        router_config: Option<dynamo_kv_router::config::KvRouterConfig>,
+        prefill_load_estimator: Option<ReplayPrefillLoadEstimator>,
+        trace: Trace,
+        num_workers: usize,
+        router_mode: ReplayRouterMode,
+    ) -> anyhow::Result<TraceSimulationReport> {
+        workload::simulate_trace_workload_with_latency_model(
+            Arc::clone(&self.latency_model),
+            args,
+            router_config,
+            prefill_load_estimator,
+            trace,
+            num_workers,
+            router_mode,
+        )
+    }
+
+    /// Simulate a fixed-concurrency workload with this runner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_concurrency_workload(
+        &self,
+        args: MockEngineArgs,
+        router_config: Option<dynamo_kv_router::config::KvRouterConfig>,
+        prefill_load_estimator: Option<ReplayPrefillLoadEstimator>,
+        trace: Trace,
+        max_in_flight: usize,
+        num_workers: usize,
+        router_mode: ReplayRouterMode,
+    ) -> anyhow::Result<TraceSimulationReport> {
+        workload::simulate_concurrency_workload_with_latency_model(
+            Arc::clone(&self.latency_model),
+            args,
+            router_config,
+            prefill_load_estimator,
+            trace,
+            max_in_flight,
+            num_workers,
+            router_mode,
+        )
+    }
 }
 
 /// Offline disaggregated replay runner with independent stage latency models.
@@ -197,6 +245,50 @@ impl<P: ReplayPrefillLatencyModel, D: ReplayDecodeLatencyModel> DisaggregatedRep
             router_mode,
         )
     }
+
+    /// Simulate a timestamped multi-turn workload with independent stage models.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_trace_workload(
+        &self,
+        config: OfflineDisaggReplayConfig,
+        router_config: Option<dynamo_kv_router::config::KvRouterConfig>,
+        prefill_load_estimator: Option<ReplayPrefillLoadEstimator>,
+        trace: Trace,
+        router_mode: ReplayRouterMode,
+    ) -> anyhow::Result<TraceSimulationReport> {
+        workload::simulate_trace_workload_disagg_with_latency_models(
+            Arc::clone(&self.prefill_latency_model),
+            Arc::clone(&self.decode_latency_model),
+            config,
+            router_config,
+            prefill_load_estimator,
+            trace,
+            router_mode,
+        )
+    }
+
+    /// Simulate a fixed-concurrency workload with independent stage models.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_concurrency_workload(
+        &self,
+        config: OfflineDisaggReplayConfig,
+        router_config: Option<dynamo_kv_router::config::KvRouterConfig>,
+        prefill_load_estimator: Option<ReplayPrefillLoadEstimator>,
+        trace: Trace,
+        max_in_flight: usize,
+        router_mode: ReplayRouterMode,
+    ) -> anyhow::Result<TraceSimulationReport> {
+        workload::simulate_concurrency_workload_disagg_with_latency_models(
+            Arc::clone(&self.prefill_latency_model),
+            Arc::clone(&self.decode_latency_model),
+            config,
+            router_config,
+            prefill_load_estimator,
+            trace,
+            max_in_flight,
+            router_mode,
+        )
+    }
 }
 
 impl<M: ReplayLatencyModel> DisaggregatedReplay<M, M> {
@@ -235,28 +327,34 @@ pub use entrypoints::{
     simulate_concurrency_file_with_router_mode_and_format, simulate_concurrency_live_file,
     simulate_concurrency_live_file_with_router_mode,
     simulate_concurrency_live_file_with_router_mode_and_format, simulate_concurrency_live_requests,
-    simulate_concurrency_live_requests_with_router_mode, simulate_concurrency_live_workload,
-    simulate_concurrency_live_workload_with_router_mode, simulate_concurrency_requests,
+    simulate_concurrency_live_requests_with_router_mode, simulate_concurrency_requests,
     simulate_concurrency_requests_disagg_with_latency_models,
     simulate_concurrency_requests_disagg_with_router_mode,
     simulate_concurrency_requests_with_latency_model,
-    simulate_concurrency_requests_with_router_mode, simulate_concurrency_workload,
-    simulate_concurrency_workload_disagg_with_router_mode,
-    simulate_concurrency_workload_with_router_mode, simulate_trace_file,
+    simulate_concurrency_requests_with_router_mode, simulate_trace_file,
     simulate_trace_file_disagg_with_router_mode,
     simulate_trace_file_disagg_with_router_mode_and_format, simulate_trace_file_with_router_mode,
     simulate_trace_file_with_router_mode_and_format, simulate_trace_live_file,
     simulate_trace_live_file_with_router_mode,
     simulate_trace_live_file_with_router_mode_and_format, simulate_trace_live_requests,
-    simulate_trace_live_requests_with_router_mode, simulate_trace_live_workload,
-    simulate_trace_live_workload_with_router_mode, simulate_trace_requests,
+    simulate_trace_live_requests_with_router_mode, simulate_trace_requests,
     simulate_trace_requests_disagg_with_latency_models,
     simulate_trace_requests_disagg_with_router_mode, simulate_trace_requests_with_latency_model,
-    simulate_trace_requests_with_router_mode, simulate_trace_workload,
-    simulate_trace_workload_disagg_with_router_mode, simulate_trace_workload_with_router_mode,
+    simulate_trace_requests_with_router_mode,
 };
 pub use planner_handle::{PlannerReplayHandle, PlannerTickData};
 pub use validate::validate_replay_args_mode;
+pub use workload::{
+    simulate_concurrency_live_workload, simulate_concurrency_live_workload_with_router_mode,
+    simulate_concurrency_workload, simulate_concurrency_workload_disagg_with_latency_models,
+    simulate_concurrency_workload_disagg_with_router_mode,
+    simulate_concurrency_workload_with_latency_model,
+    simulate_concurrency_workload_with_router_mode, simulate_trace_live_workload,
+    simulate_trace_live_workload_with_router_mode, simulate_trace_workload,
+    simulate_trace_workload_disagg_with_latency_models,
+    simulate_trace_workload_disagg_with_router_mode, simulate_trace_workload_with_latency_model,
+    simulate_trace_workload_with_router_mode,
+};
 
 pub(crate) fn normalize_trace_requests(
     mut requests: Vec<DirectRequest>,
@@ -302,6 +400,7 @@ pub(crate) fn normalize_trace_requests(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loadgen::{SessionTrace, TurnTrace};
     use std::sync::Mutex;
     use uuid::Uuid;
 
@@ -378,6 +477,30 @@ mod tests {
         }
     }
 
+    fn multi_turn_workload() -> Trace {
+        Trace {
+            block_size: 4,
+            sessions: vec![SessionTrace {
+                session_id: "session".to_string(),
+                first_arrival_timestamp_ms: Some(0.0),
+                turns: vec![
+                    TurnTrace {
+                        input_length: 8,
+                        max_output_tokens: 2,
+                        hash_ids: vec![1, 2],
+                        ..Default::default()
+                    },
+                    TurnTrace {
+                        input_length: 12,
+                        max_output_tokens: 2,
+                        hash_ids: vec![1, 2, 3],
+                        ..Default::default()
+                    },
+                ],
+            }],
+        }
+    }
+
     #[test]
     fn generic_replay_preserves_heterogeneous_request_shapes() {
         for engine_type in [
@@ -413,6 +536,33 @@ mod tests {
                     .iter()
                     .any(|input| { input.sequence_lengths == [8, 12] && input.output_length == 1 })
             );
+        }
+    }
+
+    #[test]
+    fn generic_replay_uses_injected_model_for_workloads() {
+        for engine_type in [
+            crate::common::protocols::EngineType::Vllm,
+            crate::common::protocols::EngineType::Sglang,
+        ] {
+            for num_workers in [1, 2] {
+                let model = RecordingLatencyModel::default();
+                let replay = Replay::new(model.clone());
+                let report = replay
+                    .simulate_trace_workload(
+                        replay_args(engine_type),
+                        None,
+                        None,
+                        multi_turn_workload(),
+                        num_workers,
+                        ReplayRouterMode::RoundRobin,
+                    )
+                    .unwrap();
+
+                assert_eq!(report.request_counts.completed_requests, 2);
+                assert!(!model.prefill_inputs.lock().unwrap().is_empty());
+                assert!(!model.decode_inputs.lock().unwrap().is_empty());
+            }
         }
     }
 
@@ -541,7 +691,54 @@ mod tests {
     }
 
     #[test]
-    fn shared_disaggregated_replay_routes_both_phases_through_one_model() {
+    fn free_function_and_native_replay_use_the_same_perf_model_for_workloads() {
+        let args = replay_args(crate::common::protocols::EngineType::Vllm);
+        let replay = Replay::from_arc(Arc::clone(&args.perf_model));
+
+        let free_report = simulate_trace_workload_with_router_mode(
+            args.clone(),
+            None,
+            None,
+            multi_turn_workload(),
+            1,
+            ReplayRouterMode::RoundRobin,
+        )
+        .unwrap();
+        let native_report = replay
+            .simulate_trace_workload(
+                args,
+                None,
+                None,
+                multi_turn_workload(),
+                1,
+                ReplayRouterMode::RoundRobin,
+            )
+            .unwrap();
+
+        assert_eq!(
+            free_report.request_counts.completed_requests,
+            native_report.request_counts.completed_requests
+        );
+        assert_eq!(
+            free_report.request_counts.total_input_tokens,
+            native_report.request_counts.total_input_tokens
+        );
+        assert_eq!(
+            free_report.request_counts.total_output_tokens,
+            native_report.request_counts.total_output_tokens
+        );
+        assert_eq!(
+            free_report.latency.ttft.mean_ms,
+            native_report.latency.ttft.mean_ms
+        );
+        assert_eq!(
+            free_report.latency.e2e.mean_ms,
+            native_report.latency.e2e.mean_ms
+        );
+    }
+
+    #[test]
+    fn shared_disaggregated_replay_routes_both_phases_for_requests_and_workloads() {
         use crate::common::protocols::WorkerType;
 
         let model = RecordingLatencyModel::default();
@@ -559,7 +756,7 @@ mod tests {
 
         let report = replay
             .simulate_trace_requests(
-                config,
+                config.clone(),
                 None,
                 None,
                 vec![replay_request(1, vec![1; 8], 0.0)],
@@ -569,6 +766,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.request_counts.completed_requests, 1);
+
+        let workload_report = replay
+            .simulate_trace_workload(
+                config,
+                None,
+                None,
+                multi_turn_workload(),
+                ReplayRouterMode::RoundRobin,
+            )
+            .unwrap();
+
+        assert_eq!(workload_report.request_counts.completed_requests, 2);
         assert!(!model.prefill_inputs.lock().unwrap().is_empty());
         assert!(!model.decode_inputs.lock().unwrap().is_empty());
     }

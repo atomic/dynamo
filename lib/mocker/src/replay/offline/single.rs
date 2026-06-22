@@ -52,6 +52,7 @@ impl SingleRuntime<PerfModel> {
         Self::new_with_latency_model(args, latency_model, pending, mode)
     }
 
+    #[cfg(test)]
     pub(super) fn new_workload(
         args: MockEngineArgs,
         driver: WorkloadDriver,
